@@ -1,0 +1,290 @@
+import pprint 
+import string
+
+class TokenType:
+
+        charTypes = {
+                 "digit": "0123456789",
+                 "letter": string.ascii_lowercase + string.ascii_uppercase,
+                 "space": " ",
+                 "separator": ".",
+                 "operator_add": "+",
+                 "operator_minus": "-",
+                 "operator_miltiply": "*",
+                 "operator_divide": "/",
+                 "bracket_open": "(",
+                 "bracket_close": ")"}
+        
+        multipleCharTypes = {
+            "sequence_int",
+            "sequence_double",
+            "sequence_identifier",
+            "sequence_space",
+            #"separator",
+            "operator_add",
+            "operator_minus",
+            "operator_miltiply",
+            "operator_divide",
+            "bracket_open",
+            "bracket_close"
+        }
+        
+        @staticmethod
+        def getSingleCharType(c):
+            for type in TokenType.charTypes:
+                if (c) in TokenType.charTypes[type]:
+                    return type
+            return "unknown"
+
+class Parser_SingleTokens:
+    def __init__(self, input):
+        self.input = input
+        self.SingleCharTokens = self.PrepareSingleCharTokens()
+
+    def PrepareSingleCharTokens(self):
+        singleCharTokens = []
+        if len(self.input) > 0:
+            for i, c in enumerate(self.input):
+                singleCharTokens.append({"content": c,\
+                                         "type": TokenType.getSingleCharType(c), 
+                                         "position": i,
+                                         "length": 1})
+            return singleCharTokens
+        return singleCharTokens
+    
+class FSM:
+    class Route:
+        def __init__(self, oldState, newState, event, comparison="=="):
+            self.oldState = oldState
+            self.newState = newState
+            self.event = event
+            self.comparison = comparison
+
+        def isOK(self, oldState, event):
+            if self.oldState == oldState:
+                if self.comparison == "==" and event == TokenType.charTypes[self.event]:
+                    return True
+                elif self.comparison == "!=" and event != TokenType.charTypes[self.event]:
+                    return True
+                elif self.comparison == "in" and event in TokenType.charTypes[self.event]:
+                    return True
+            return False
+        
+    def __init__(self, routes):
+        self.routes = routes
+
+    def test(self, input):
+        newToken = {"content": "", "length": 0, "position": input[0]["position"], "type":""}
+        currentState = "Start"
+
+        for inputToken in input:
+            noRoute = True
+            for route in self.routes:
+                if route.isOK(currentState, inputToken["content"]):
+                    noRoute = False
+                    currentState = route.newState
+                    #print("Dopasowano ___" + inputToken["content"] +"___")
+                    newToken["content"] += inputToken["content"]
+                    newToken["length"] += inputToken["length"]
+                    newToken["type"] = currentState
+                    
+                    break
+                
+            if currentState == "Reject":
+                return newToken
+                return "Reject by route"
+            elif noRoute:
+                return newToken
+                return "Reject by noRoute"
+            elif currentState == "Accept":
+                return newToken
+                return "Accept"
+        return newToken
+        return "Reject by end input"
+
+class BNF:
+    #składnia
+    # a :==  b | c | d
+    # lub
+    # a :== b
+    # a :== c
+    # a :== d
+    def __init__(self, bnf_rules_string):
+        self.rules = {}
+        
+        all_symbols = []
+        lines = bnf_rules_string.strip().split("\n")
+
+        for line in lines:
+            left, right = line.split("::=")
+
+            left = left.strip()
+            right = right.strip()
+
+            if left not in all_symbols:
+                all_symbols.append(left)
+
+            prod_array = []
+            for prod in right.split("|"):
+                symbol_array = []
+                for symbol in prod.split():
+                    symbol = symbol.strip()
+                    symbol_array.append(symbol)
+                    if symbol not in all_symbols:
+                        all_symbols.append(symbol)
+                prod_array.append(symbol_array)
+
+            if left not in self.rules.keys():
+                self.rules[left] = prod_array
+            else:
+                self.rules[left] += prod_array
+        
+        #pierwszy symbol jest startowy
+        self.start_token = all_symbols[0]
+        self.non_terminals = list(self.rules.keys())
+        self.terminals = []
+        for symbol in all_symbols:
+            if symbol not in self.non_terminals:
+                self.terminals.append(symbol)
+
+    def pprint(self):
+        print("Start: ")
+        pprint.pprint(self.start_token)
+        print("Non terminals: ")
+        pprint.pprint(self.non_terminals)
+        print("Terminals: ")
+        pprint.pprint(self.terminals)
+        print("Rules: ")
+        pprint.pprint(self.rules)
+        
+    def parse(self, input_tokens):
+        def match_rule(rule, input_tokens):
+            #print("Wywołanie ", rule)
+            """
+            Rekurencyjna funkcja, która sprawdza, czy dana reguła pasuje do części ciągu.
+            """
+            if not rule and not input_tokens:  # Jeśli reguła i ciąg są puste, jest dopasowanie.
+                #print("reguła i ciąg są puste, jest dopasowanie")
+                return True
+            if not rule or not input_tokens:  # Jeśli jedno jest puste, brak dopasowania.
+                #print("reguła lub ciąg jest pusty, brak dopasowania")
+                return False
+
+            current = rule[0]
+            rest_rule = rule[1:]
+            
+            if current in self.terminals:
+                # Jeśli aktualny symbol to terminal, sprawdź zgodność z pierwszym znakiem ciągu.
+                if input_tokens[0]["type"] == current:
+                    #print("terminal dopasowany ", current)
+                    return match_rule(rest_rule, input_tokens[1:])
+                else:
+                    #print("brak terminala dla           ", current, "     ", input_tokens)
+                    return False
+            elif current in self.non_terminals:
+                # Jeśli aktualny symbol to nieterminal, sprawdź wszystkie jego produkcje.
+                for production in self.rules.get(current, []):
+                    if match_rule(production + rest_rule, input_tokens):
+                        return True
+            #print("brak reguły nieterminala dla    ", current, "  ", input_tokens)
+            return False
+
+        def match_start(symbol, string):
+            """
+            Sprawdza dopasowanie dla danego nieterminala od początku ciągu.
+            """
+            for production in self.rules.get(symbol, []):
+                if match_rule(production, string):
+                    return True
+            return False
+
+        # Wywołaj dopasowanie dla symbolu startowego.
+        return match_start(self.start_token, input_tokens)
+
+############################
+############################
+############################
+inputString = "123.-.0+x*.3+(41-111.2)-VaR123/(99+a1b2c3)"
+
+
+# STEP 1
+print("STEP 1 - Single Char Tokens")
+parser = Parser_SingleTokens(inputString)
+#pprint.pprint(parser.SingleCharTokens)
+
+# STEP 2 / 3
+print("STEP 2/3 - Multiple Char Tokens")
+routes = [
+    FSM.Route("Start", "sequence_int", "digit", "in"),
+    FSM.Route("Start", "separator", "separator"),
+
+    FSM.Route("Start", "sequence_identifier", "letter", "in"),
+    FSM.Route("Start", "sequence_space", "space", "in"),
+    
+    FSM.Route("Start", "operator_add", "operator_add"),
+    FSM.Route("Start", "operator_minus", "operator_minus"),
+    FSM.Route("Start", "operator_miltiply", "operator_miltiply"),
+    FSM.Route("Start", "operator_divide", "operator_divide"),
+    FSM.Route("Start", "bracket_open", "bracket_open"),
+    FSM.Route("Start", "bracket_close", "bracket_close"),
+    
+    FSM.Route("sequence_int", "sequence_int", "digit", "in"),
+    FSM.Route("sequence_int", "sequence_double", "separator", "in"),
+    FSM.Route("separator","sequence_double", "digit", "in"),
+    FSM.Route("sequence_double", "sequence_double", "digit", "in"),
+    
+    FSM.Route("sequence_identifier", "sequence_identifier", "digit", "in"),
+    FSM.Route("sequence_identifier", "sequence_identifier", "letter", "in"),
+    
+    FSM.Route("sequence_space", "sequence_space", "space", "in")
+]
+fsm_step2= FSM(routes)
+
+start_SingleCharToken = 0
+multipleCharTokens = []
+while start_SingleCharToken<len(parser.SingleCharTokens):
+    current_token = fsm_step2.test(parser.SingleCharTokens[start_SingleCharToken:])
+    if current_token["length"] == 0:
+        print("Problem STEP 2 nierozpoznany znak!")
+        pprint.pprint(current_token)
+        break
+    elif current_token["type"] not in TokenType.multipleCharTypes:
+        print("Problem STEP 2 nierozpoznany token!")
+        pprint.pprint(current_token)
+        break
+    else:
+        multipleCharTokens.append(current_token)
+        start_SingleCharToken += current_token["length"]
+
+
+#pprint.pprint(multipleCharTokens, width=100)
+
+
+# STEP 4
+print("STEP 4 - gramatyka bezkontekstowa BNF")
+
+bnf_string = """
+statement ::= value operator_add statement
+statement ::= value operator_minus statement
+statement ::= value operator_miltiply statement
+statement ::= value operator_divide statement
+statement ::= value
+value ::= bracket_open statement bracket_close
+value ::= sequence_int
+value ::= sequence_double
+value ::= sequence_identifier
+"""
+
+myBNF = BNF(bnf_string)
+#myBNF.pprint()
+
+BNFresult = myBNF.parse(multipleCharTokens)
+
+for token in multipleCharTokens:
+    print(token["content"], end="  "),
+print()
+
+if BNFresult:
+    print("BNF OK")
+else:
+    print("BNF - błąd składni!")
